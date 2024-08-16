@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "start": "nodemon index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -13,5 +14,8 @@
     "amqplib": "^0.10.4",
     "axios": "^1.7.4",
     "minio": "^8.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
   }
 }

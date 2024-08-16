@@ -15,8 +15,8 @@ services:
   minio:
     image: minio/minio
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: admin
+      MINIO_ROOT_USER: adminadminadmin
+      MINIO_ROOT_PASSWORD: adminadminadmin
     volumes:
       - minio_data:/data
     ports:

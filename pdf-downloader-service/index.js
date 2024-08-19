@@ -3,7 +3,6 @@ const axios = require("axios");
 const Minio = require("minio");
 const fs = require('fs');
 const path = require('path');
-const stream = require("stream");
 
 const minioClient = new Minio.Client({
   endPoint: "minio",
@@ -14,94 +13,81 @@ const minioClient = new Minio.Client({
 });
 
 const QUEUE = "pdf_queue";
+const LOCAL_FOLDER = 'savedPdfTest';
 
-async function downloadPdf(url, filename) {
+if (!fs.existsSync(LOCAL_FOLDER)) {
+  fs.mkdirSync(LOCAL_FOLDER);
+  console.log(`Folder '${LOCAL_FOLDER}' created.`);
+}
+
+async function downloadPdf(url, destination = 'minio') {
   try {
+    const filename = path.basename(url);
     console.log(`Downloading PDF from: ${url}`);
-    const response = await axios.get(url, { responseType: "stream" });
 
-    const bucketName = "pdfs";
+    const response = await axios.get(url, { responseType: "arraybuffer" });
+    const buffer = Buffer.from(response.data);
 
-    const generateUniqueFilename = async (baseFilename) => {
-      let uniqueFilename = baseFilename;
-      let counter = 1;
-
-      while (true) {
-        try {
-          await minioClient.statObject(bucketName, uniqueFilename);
-          uniqueFilename = `${path.basename(baseFilename, path.extname(baseFilename))}(${counter++})${path.extname(baseFilename)}`;
-        } catch (err) {
-          if (err.code === 'NotFound') {
-            return uniqueFilename;
-          }
-          throw err;
-        }
-      }
-    };
-
-    const uniqueFilename = await generateUniqueFilename(filename);
-
-    const passthrough = new stream.PassThrough();
-    response.data.pipe(passthrough);
-
-    await minioClient.putObject(bucketName, uniqueFilename, passthrough, (err) => {
-      if (err) {
-        console.error(`Failed to save ${uniqueFilename} to Minio:`, err);
-        throw err;
-      }
+    if (destination === 'minio') {
+      const uniqueFilename = await generateUniqueFilename(filename, 'minio');
+      await minioClient.putObject("pdfs", uniqueFilename, buffer);
       console.log(`Successfully saved ${uniqueFilename} to Minio.`);
-    });
+    } else if (destination === 'local') {
+      const uniqueFilename = await generateUniqueFilename(filename, 'local');
+      const filePath = path.join(LOCAL_FOLDER, uniqueFilename);
+      fs.writeFileSync(filePath, buffer);
+      console.log(`Successfully saved ${uniqueFilename} to local folder '${LOCAL_FOLDER}'.`);
+    } else {
+      throw new Error(`Invalid destination: ${destination}`);
+    }
+
   } catch (error) {
-    console.error(`Error downloading PDF from ${url}:`, error);
+    console.error(`Error downloading or saving PDF from ${url}:`, error);
   }
 }
 
-// async function downloadPdfToLocalFolder(url, filename) {
-//   try {
-//     console.log(`Downloading PDF from: ${url} to local folder.`);
-//     const response = await axios.get(url, { responseType: "stream" });
+async function generateUniqueFilename(baseFilename, destination) {
+  let uniqueFilename = baseFilename;
+  let counter = 1;
 
-//     const localFolder = 'savedPdfTest';
+  if (destination === 'minio') {
+    const bucketName = "pdfs";
+    while (true) {
+      try {
+        await minioClient.statObject(bucketName, uniqueFilename);
+        uniqueFilename = `${path.basename(baseFilename, path.extname(baseFilename))}(${counter++})${path.extname(baseFilename)}`;
+      } catch (err) {
+        if (err.code === "NotFound") {
+          return uniqueFilename;
+        }
+        throw err;
+      }
+    }
+  } else if (destination === 'local') {
+    const filePath = path.join(LOCAL_FOLDER, uniqueFilename);
+    while (fs.existsSync(filePath)) {
+      uniqueFilename = `${path.basename(baseFilename, path.extname(baseFilename))}(${counter++})${path.extname(baseFilename)}`;
+    }
+    return uniqueFilename;
+  } else {
+    throw new Error(`Invalid destination: ${destination}`);
+  }
+}
 
-//     if (!fs.existsSync(localFolder)) {
-//       fs.mkdirSync(localFolder);
-//       console.log(`Folder '${localFolder}' created.`);
-//     }
-
-//     const filePath = path.join(localFolder, filename);
-//     const writeStream = fs.createWriteStream(filePath);
-
-//     response.data.pipe(writeStream);
-
-//     return new Promise((resolve, reject) => {
-//       writeStream.on('finish', () => {
-//         console.log(`Successfully saved ${filename} to local folder '${localFolder}'.`);
-//         resolve(filePath);
-//       });
-
-//       writeStream.on('error', (err) => {
-//         console.error(`Failed to save ${filename} to local folder:`, err);
-//         reject(err);
-//       });
-//     });
-//   } catch (error) {
-//     console.error(`Error downloading PDF from ${url}:`, error);
-//   }
-// }
-
-async function consumeMessages() {
+async function consumeMessages(urlBatchSize = 5, destination = 'minio') {
   const connection = await connectToRabbitMQ();
   const channel = await connection.createChannel();
-
   await channel.assertQueue(QUEUE);
 
   channel.consume(QUEUE, async (msg) => {
     if (msg !== null) {
       const { urls } = JSON.parse(msg.content.toString());
-      for (let url of urls) {
-        const filename = url.split("/").pop();
-        await downloadPdf(url, filename);
+
+      for (let i = 0; i < urls.length; i += urlBatchSize) {
+        const urlBatch = urls.slice(i, i + urlBatchSize);
+        await Promise.all(urlBatch.map(url => downloadPdf(url, destination)));
       }
+
       channel.ack(msg);
     }
   });

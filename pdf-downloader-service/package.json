@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "amqplib": "^0.10.4",
+    "async": "^3.2.6",
     "axios": "^1.7.4",
     "minio": "^8.0.1"
   },

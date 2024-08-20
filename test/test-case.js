@@ -2,9 +2,9 @@ const axios = require("axios");
 
 const testUrl = "http://localhost:3000/download";
 
-const originalUrls = ["https://files.testfile.org/PDF/10MB-TESTFILE.ORG.pdf"];
+const originalUrls = ["https://s29.q4cdn.com/175625835/files/doc_downloads/test.pdf"];
 
-const urls = originalUrls.flatMap((url) => Array(10).fill(url));
+const urls = originalUrls.flatMap((url) => Array(20).fill(url));
 
 const requestData = { urls };
 

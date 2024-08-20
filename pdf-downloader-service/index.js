@@ -25,7 +25,7 @@ async function initialize() {
   try {
     const bucketExists = await minioClient.bucketExists(BUCKET_NAME);
     if (!bucketExists) {
-      await minioClient.makeBucket(BUCKET_NAME, "us-east-1");
+      await minioClient.makeBucket(BUCKET_NAME);
       console.log(`Bucket '${BUCKET_NAME}' created.`);
     } else {
       console.log(`Bucket '${BUCKET_NAME}' already exists.`);

@@ -36,7 +36,7 @@ async function initialize() {
   }
 }
 
-async function downloadPdf(url, destination = 'minio') {
+async function downloadPdf(url, destination) {
   try {
     const filename = path.basename(url);
     console.log(`Downloading PDF from: ${url}`);
@@ -79,9 +79,10 @@ async function generateUniqueFilename(baseFilename, destination) {
       }
     }
   } else if (destination === 'local') {
-    const filePath = path.join(LOCAL_FOLDER, uniqueFilename);
+    let filePath = path.join(LOCAL_FOLDER, uniqueFilename);
     while (fs.existsSync(filePath)) {
       uniqueFilename = `${path.basename(baseFilename, path.extname(baseFilename))}(${counter++})${path.extname(baseFilename)}`;
+      filePath = path.join(LOCAL_FOLDER, uniqueFilename);
     }
     return uniqueFilename;
   } else {

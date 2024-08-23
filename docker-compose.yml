@@ -29,6 +29,8 @@ services:
 
   pdf-downloader-service:
     build: ./pdf-downloader-service
+    dns:
+      - 8.8.8.8
     depends_on:
       - rabbitmq
       - minio

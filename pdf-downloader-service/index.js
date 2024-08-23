@@ -3,6 +3,9 @@ const axios = require("axios");
 const Minio = require("minio");
 const fs = require('fs');
 const path = require('path');
+const mongoose = require("mongoose");
+const winston = require("winston");
+const LogEntry = require("./models/logEntry.js");
 
 const minioClient = new Minio.Client({
   endPoint: "minio",
@@ -21,88 +24,112 @@ if (!fs.existsSync(LOCAL_FOLDER)) {
   console.log(`Folder '${LOCAL_FOLDER}' created.`);
 }
 
+const logger = winston.createLogger({
+  level: "info",
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: "logs/combined.log" }),
+    new winston.transports.Console(),
+  ],
+});
+
+mongoose.connect("mongodb+srv://allUser:allUser123@learning.fae4utw.mongodb.net/pdfdownloadservice?retryWrites=true&w=majority")
+  .then(() => logger.info("Connected to MongoDB"))
+  .catch(err => logger.error("Failed to connect to MongoDB", { error: err.message }));
+
 async function initialize() {
   try {
     const bucketExists = await minioClient.bucketExists(BUCKET_NAME);
     if (!bucketExists) {
       await minioClient.makeBucket(BUCKET_NAME);
-      console.log(`Bucket '${BUCKET_NAME}' created.`);
+      logger.info(`Bucket '${BUCKET_NAME}' created.`);
     } else {
-      console.log(`Bucket '${BUCKET_NAME}' already exists.`);
+      logger.info(`Bucket '${BUCKET_NAME}' already exists.`);
     }
   } catch (error) {
-    console.error(`Error initializing bucket: ${error}`);
+    logger.error(`Error initializing bucket: ${error.message}`);
     process.exit(1); 
   }
 }
 
-async function downloadPdf(url, destination) {
-  try {
-    const filename = path.basename(url);
-    console.log(`Downloading PDF from: ${url}`);
+async function generateUniqueFilename(destination) {
+  const { nanoid } = await import('nanoid');
+  const dateTime = new Date().toISOString().replace(/[-:.T]/g, '').slice(0, 14);
+  const nanoId = nanoid(5).toUpperCase();
+  return `${dateTime}${nanoId}.pdf`;
+}
 
+async function downloadPdf(url, destination, channel) {
+  const startTime = new Date();
+  let filename = "";
+  let fileSize = 0;
+  let status = "success";
+
+  try {
     const response = await axios.get(url, { responseType: "arraybuffer" });
     const buffer = Buffer.from(response.data);
+    fileSize = buffer.length;
 
+    filename = await generateUniqueFilename(destination); 
     if (destination === 'minio') {
-      const uniqueFilename = await generateUniqueFilename(filename, 'minio');
-      await minioClient.putObject(BUCKET_NAME, uniqueFilename, buffer);
-      console.log(`Successfully saved ${uniqueFilename} to Minio.`);
+      await minioClient.putObject(BUCKET_NAME, filename, buffer);
+      logger.info(`Successfully saved ${filename} to Minio.`);
     } else if (destination === 'local') {
-      const uniqueFilename = await generateUniqueFilename(filename, 'local');
-      const filePath = path.join(LOCAL_FOLDER, uniqueFilename);
+      const filePath = path.join(LOCAL_FOLDER, filename);
       fs.writeFileSync(filePath, buffer);
-      console.log(`Successfully saved ${uniqueFilename} to local folder '${LOCAL_FOLDER}'.`);
+      logger.info(`Successfully saved ${filename} to local folder '${LOCAL_FOLDER}'.`);
     } else {
       throw new Error(`Invalid destination: ${destination}`);
     }
 
   } catch (error) {
-    console.error(`Error downloading or saving PDF from ${url}:`, error);
+    status = "failed";
+    logger.error(`Error downloading or saving PDF from ${url}: ${error.message}`);
+    // Re-queue the URL for another attempt
+    await channel.sendToQueue(QUEUE, Buffer.from(JSON.stringify({ url })));
+    logger.info(`Requeued URL ${url} due to error`);
+  } finally {
+    const endTime = new Date();
+    const duration = endTime - startTime;
+
+    // Save log entry to MongoDB
+    const logEntry = new LogEntry({
+      url,
+      filename,
+      destination,
+      startTime,
+      endTime,
+      duration,
+      status,
+      fileSize,
+    });
+    await logEntry.save();
+
+    // Log to winston
+    logger.info(`Processed URL ${url}`, {
+      url,
+      filename,
+      destination,
+      duration,
+      status,
+      fileSize,
+    });
   }
 }
 
-async function generateUniqueFilename(baseFilename, destination) {
-  let uniqueFilename = baseFilename;
-  let counter = 1;
-
-  if (destination === 'minio') {
-    while (true) {
-      try {
-        await minioClient.statObject(BUCKET_NAME, uniqueFilename);
-        uniqueFilename = `${path.basename(baseFilename, path.extname(baseFilename))}(${counter++})${path.extname(baseFilename)}`;
-      } catch (err) {
-        if (err.code === "NotFound") {
-          return uniqueFilename;
-        }
-        throw err;
-      }
-    }
-  } else if (destination === 'local') {
-    let filePath = path.join(LOCAL_FOLDER, uniqueFilename);
-    while (fs.existsSync(filePath)) {
-      uniqueFilename = `${path.basename(baseFilename, path.extname(baseFilename))}(${counter++})${path.extname(baseFilename)}`;
-      filePath = path.join(LOCAL_FOLDER, uniqueFilename);
-    }
-    return uniqueFilename;
-  } else {
-    throw new Error(`Invalid destination: ${destination}`);
-  }
-}
-
-async function consumeMessages(urlBatchSize = 3, destination = 'minio') {
+async function consumeMessages(destination = 'minio') {
   const connection = await connectToRabbitMQ();
   const channel = await connection.createChannel();
   await channel.assertQueue(QUEUE);
 
   channel.consume(QUEUE, async (msg) => {
     if (msg !== null) {
-      const { urls } = JSON.parse(msg.content.toString());
+      const { url } = JSON.parse(msg.content.toString());
 
-      for (let i = 0; i < urls.length; i += urlBatchSize) {
-        const urlBatch = urls.slice(i, i + urlBatchSize);
-        await Promise.all(urlBatch.map(url => downloadPdf(url, destination)));
-      }
+      await downloadPdf(url, destination, channel);
 
       channel.ack(msg);
     }
@@ -113,12 +140,12 @@ async function connectToRabbitMQ(retries = 5) {
   while (retries) {
     try {
       const connection = await amqp.connect("amqp://rabbitmq");
-      console.log("Connected to RabbitMQ");
+      logger.info("Connected to RabbitMQ");
       return connection;
     } catch (err) {
-      console.error("Failed to connect to RabbitMQ:", err);
+      logger.error("Failed to connect to RabbitMQ:", err.message);
       retries -= 1;
-      console.log(`Retries left: ${retries}`);
+      logger.info(`Retries left: ${retries}`);
       await new Promise((res) => setTimeout(res, 5000));
     }
   }
@@ -126,5 +153,5 @@ async function connectToRabbitMQ(retries = 5) {
 }
 
 initialize()
-  .then(() => consumeMessages().catch(console.error))
-  .catch(console.error);
+  .then(() => consumeMessages().catch(logger.error))
+  .catch(logger.error);

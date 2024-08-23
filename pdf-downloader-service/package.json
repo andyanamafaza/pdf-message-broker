@@ -14,7 +14,12 @@
     "amqplib": "^0.10.4",
     "async": "^3.2.6",
     "axios": "^1.7.4",
-    "minio": "^8.0.1"
+    "express": "^4.19.2",
+    "minio": "^8.0.1",
+    "mongoose": "^8.5.3",
+    "morgan": "^1.10.0",
+    "nanoid": "^5.0.7",
+    "winston": "^3.14.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

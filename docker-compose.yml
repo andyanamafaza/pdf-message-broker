@@ -19,6 +19,13 @@ services:
       - "9001:9001"
     command: server /data --console-address ":9001"
 
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
   express-service:
     build: ./express-service
     ports:
@@ -26,6 +33,7 @@ services:
     depends_on:
       - rabbitmq
       - minio
+      - mongodb
 
   pdf-downloader-service:
     build: ./pdf-downloader-service
@@ -34,9 +42,12 @@ services:
     depends_on:
       - rabbitmq
       - minio
+      - mongodb
 
 volumes:
   minio_data:
     driver: local
   rabbitmq_data:
+    driver: local
+  mongo_data:
     driver: local

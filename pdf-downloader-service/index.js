@@ -36,7 +36,7 @@ const logger = winston.createLogger({
   ],
 });
 
-mongoose.connect("mongodb+srv://allUser:allUser123@learning.fae4utw.mongodb.net/pdfdownloadservice?retryWrites=true&w=majority")
+mongoose.connect("mongodb://mongodb:27017/pdfdownloadservice")
   .then(() => logger.info("Connected to MongoDB"))
   .catch(err => logger.error("Failed to connect to MongoDB", { error: err.message }));
 

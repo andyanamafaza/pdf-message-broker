@@ -24,7 +24,7 @@ app.use(morgan("combined", { stream: { write: (message) => logger.info(message.t
 
 app.use(express.json());
 
-mongoose.connect("mongodb+srv://allUser:allUser123@learning.fae4utw.mongodb.net/pdfdownloadservice?retryWrites=true&w=majority")
+mongoose.connect("mongodb://mongodb:27017/pdfdownloadservice")
   .then(() => logger.info("Connected to MongoDB"))
   .catch(err => logger.error("Failed to connect to MongoDB", { error: err.message }));
 

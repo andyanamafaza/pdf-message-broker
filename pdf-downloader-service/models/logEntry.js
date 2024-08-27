@@ -4,9 +4,12 @@ const logEntrySchema = new mongoose.Schema({
   url: String,
   filename: String,
   destination: String,
-  startTime: Date,
-  endTime: Date,
-  duration: Number, // in milliseconds
+  downloadStartTime: Date,
+  downloadEndTime: Date,
+  saveStartTime: Date,
+  saveEndTime: Date,
+  downloadDuration: Number, // in milliseconds
+  saveDuration: Number, // in milliseconds
   status: String,
   fileSize: Number, // in bytes
 }, { timestamps: true });

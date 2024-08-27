@@ -80,17 +80,24 @@ async function generateUniqueFilename(destination) {
 }
 
 async function downloadPdf(url, destination, channel) {
-  const startTime = new Date();
   let filename = "";
   let fileSize = 0;
   let status = "success";
+
+  const downloadStartTime = new Date(); // Start time for download
+  let downloadEndTime; // End time for download
+  let saveStartTime; // Start time for saving
+  let saveEndTime; // End time for saving
 
   try {
     const response = await axios.get(url, { responseType: "arraybuffer" });
     const buffer = Buffer.from(response.data);
     fileSize = buffer.length;
+    downloadEndTime = new Date(); // End time for download
 
-    filename = await generateUniqueFilename(destination); 
+    filename = await generateUniqueFilename(destination);
+    saveStartTime = new Date(); // Start time for saving
+
     if (destination === 'minio') {
       await minioClient.putObject(BUCKET_NAME, filename, buffer);
       logger.info(`Successfully saved ${filename} to Minio.`);
@@ -101,6 +108,7 @@ async function downloadPdf(url, destination, channel) {
     } else {
       throw new Error(`Invalid destination: ${destination}`);
     }
+    saveEndTime = new Date(); // End time for saving
 
   } catch (error) {
     status = "failed";
@@ -109,17 +117,20 @@ async function downloadPdf(url, destination, channel) {
     await channel.sendToQueue(QUEUE, Buffer.from(JSON.stringify({ url })));
     logger.info(`Requeued URL ${url} due to error`);
   } finally {
-    const endTime = new Date();
-    const duration = endTime - startTime;
+    const downloadDuration = downloadEndTime - downloadStartTime;
+    const saveDuration = saveEndTime - saveStartTime;
 
     // Save log entry to MongoDB
     const logEntry = new LogEntry({
       url,
       filename,
       destination,
-      startTime,
-      endTime,
-      duration,
+      downloadStartTime,
+      downloadEndTime,
+      saveStartTime,
+      saveEndTime,
+      downloadDuration,
+      saveDuration,
       status,
       fileSize,
     });
@@ -130,17 +141,21 @@ async function downloadPdf(url, destination, channel) {
       url,
       filename,
       destination,
-      duration,
+      downloadDuration,
+      saveDuration,
       status,
       fileSize,
     });
   }
 }
 
+
 async function consumeMessages(destination = 'minio') {
   const connection = await connectToRabbitMQ();
   const channel = await connection.createChannel();
   await channel.assertQueue(QUEUE);
+
+  channel.prefetch(1);
 
   channel.consume(QUEUE, async (msg) => {
     if (msg !== null) {

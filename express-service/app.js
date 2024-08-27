@@ -55,8 +55,18 @@ app.get("/status", async (req, res) => {
     const totalRequests = await LogEntry.countDocuments();
     const successfulRequests = await LogEntry.countDocuments({ status: "success" });
 
-    const lastTenMinutes = await LogEntry.find({ 
-      startTime: { $gte: tenMinutesAgo },
+    // const lastTenMinutes = await LogEntry.find({ 
+    //   startTime: { $gte: tenMinutesAgo },
+    //   status: "success"
+    // });
+
+    const lastTenMinutesDownload = await LogEntry.find({
+      downloadStartTime: { $gte: tenMinutesAgo },
+      status: "success"
+    });
+
+    const lastTenMinutesSave = await LogEntry.find({
+      saveStartTime: { $gte: tenMinutesAgo },
       status: "success"
     });
 
@@ -78,16 +88,26 @@ app.get("/status", async (req, res) => {
         : `${bytes} bytes`;
     };
 
-    const avgDownloadTimeLast10Min = lastTenMinutes.length > 0
-      ? lastTenMinutes.reduce((acc, entry) => acc + entry.duration, 0) / lastTenMinutes.length
+    const avgDownloadTimeLast10Min = lastTenMinutesDownload.length > 0
+      ? lastTenMinutesDownload.reduce((acc, entry) => acc + entry.downloadDuration, 0) / lastTenMinutesDownload.length
+      : 0;
+
+    const avgSaveTimeLast10Min = lastTenMinutesSave.length > 0
+      ? lastTenMinutesSave.reduce((acc, entry) => acc + entry.saveDuration, 0) / lastTenMinutesSave.length
       : 0;
 
     const avgDownloadTimeLast10Downloads = lastTenDownloads.length > 0
-      ? lastTenDownloads.reduce((acc, entry) => acc + entry.duration, 0) / lastTenDownloads.length
+      ? lastTenDownloads.reduce((acc, entry) => acc + entry.downloadDuration, 0) / lastTenDownloads.length
       : 0;
 
-    const fastestDownload = await LogEntry.findOne({ status: "success" }).sort({ duration: 1 });
-    const slowestDownload = await LogEntry.findOne({ status: "success" }).sort({ duration: -1 });
+    const avgSaveTimeLast10Downloads = lastTenDownloads.length > 0
+      ? lastTenDownloads.reduce((acc, entry) => acc + entry.saveDuration, 0) / lastTenDownloads.length
+      : 0;
+
+    const fastestDownload = await LogEntry.findOne({ status: "success" }).sort({ downloadDuration: 1 });
+    const fastestSave = await LogEntry.findOne({ status: "success" }).sort({ saveDuration: 1 });
+    const slowestDownload = await LogEntry.findOne({ status: "success" }).sort({ downloadDuration: -1 });
+    const slowestSave = await LogEntry.findOne({ status: "success" }).sort({ saveDuration: -1 });
     const smallestDownload = await LogEntry.findOne({ status: "success", fileSize: { $gt: 0 } }).sort({ fileSize: 1 });
     const biggestDownload = await LogEntry.findOne({ status: "success" }).sort({ fileSize: -1 });
 
@@ -95,9 +115,13 @@ app.get("/status", async (req, res) => {
       totalRequests,
       successfulRequests,
       avgDownloadTimeLast10Min: formatDuration(avgDownloadTimeLast10Min),
+      avgSaveTimeLast10Min: formatDuration(avgSaveTimeLast10Min),
       avgDownloadTimeLast10Downloads: formatDuration(avgDownloadTimeLast10Downloads),
-      fastestDownload: formatDuration(fastestDownload?.duration || 0),
-      slowestDownload: formatDuration(slowestDownload?.duration || 0),
+      avgSaveTimeLast10Downloads: formatDuration(avgSaveTimeLast10Downloads),
+      fastestDownload: formatDuration(fastestDownload?.downloadDuration || 0),
+      fastestSave: formatDuration(fastestSave?.saveDuration || 0),
+      slowestDownload: formatDuration(slowestDownload?.downloadDuration || 0),
+      slowestSave: formatDuration(slowestSave?.saveDuration || 0),
       biggestDownload: formatFileSize(biggestDownload?.fileSize || 0),
       smallestDownload: formatFileSize(smallestDownload?.fileSize || 0),
     });

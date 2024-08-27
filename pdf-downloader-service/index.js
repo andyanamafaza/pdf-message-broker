@@ -6,6 +6,7 @@ const path = require('path');
 const mongoose = require("mongoose");
 const winston = require("winston");
 const LogEntry = require("./models/logEntry.js");
+const { combine, timestamp, printf, json, colorize } = winston.format;
 
 const minioClient = new Minio.Client({
   endPoint: "minio",
@@ -24,15 +25,31 @@ if (!fs.existsSync(LOCAL_FOLDER)) {
   console.log(`Folder '${LOCAL_FOLDER}' created.`);
 }
 
+// Custom format for console logs
+const consoleFormat = combine(
+  colorize(),
+  timestamp(),
+  printf(({ timestamp, level, message, ...meta }) => {
+    let metaString = Object.keys(meta).length ? JSON.stringify(meta, null, 2) : '';
+    return `${timestamp} [${level}]: ${message} ${metaString}`;
+  })
+);
+
+// Custom format for file logs
+const fileFormat = combine(
+  timestamp(),
+  printf(({ timestamp, level, message, ...meta }) => {
+    let metaString = Object.keys(meta).length ? JSON.stringify(meta, null, 2) : '';
+    return `${timestamp} [${level}]: ${message} ${metaString}`;
+  })
+);
+
 const logger = winston.createLogger({
   level: "info",
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
+  format: json(),
   transports: [
-    new winston.transports.File({ filename: "logs/combined.log" }),
-    new winston.transports.Console(),
+    new winston.transports.File({ filename: "logs/combined.log", format: fileFormat }),
+    new winston.transports.Console({ format: consoleFormat }),
   ],
 });
 

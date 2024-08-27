@@ -8,19 +8,38 @@ const LogEntry = require("./models/logEntry.js");
 const app = express();
 const PORT = 3000;
 
+const { combine, timestamp, printf, colorize } = winston.format;
+
+// Custom format for console logs
+const consoleFormat = combine(
+  colorize(),
+  timestamp(),
+  printf(({ timestamp, level, message, ...meta }) => {
+    let metaString = Object.keys(meta).length ? JSON.stringify(meta, null, 2) : '';
+    return `${timestamp} [${level}]: ${message} ${metaString}`;
+  })
+);
+
+// Custom format for file logs
+const fileFormat = combine(
+  timestamp(),
+  printf(({ timestamp, level, message, ...meta }) => {
+    let metaString = Object.keys(meta).length ? JSON.stringify(meta, null, 2) : '';
+    return `${timestamp} [${level}]: ${message} ${metaString}`;
+  })
+);
+
 const logger = winston.createLogger({
   level: "info",
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
   transports: [
-    new winston.transports.File({ filename: "logs/express-service.log" }),
-    new winston.transports.Console(),
+    new winston.transports.File({ filename: "logs/express-service.log", format: fileFormat }),
+    new winston.transports.Console({ format: consoleFormat }),
   ],
 });
 
-app.use(morgan("combined", { stream: { write: (message) => logger.info(message.trim()) } }));
+app.use(morgan((tokens, req, res) => {
+  return `HTTP ${tokens.status(req, res)}`;
+}, { stream: { write: (message) => logger.info(message.trim()) } }));
 
 app.use(express.json());
 

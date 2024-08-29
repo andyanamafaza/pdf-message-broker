@@ -1,12 +1,14 @@
 const amqp = require("amqplib");
 const axios = require("axios");
 const Minio = require("minio");
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 const mongoose = require("mongoose");
 const winston = require("winston");
 const LogEntry = require("./models/logEntry.js");
 const { combine, timestamp, printf, json, colorize } = winston.format;
+const { ElasticsearchTransport } = require("winston-elasticsearch");
+const { Client } = require("@elastic/elasticsearch");
 
 const minioClient = new Minio.Client({
   endPoint: "minio",
@@ -17,12 +19,29 @@ const minioClient = new Minio.Client({
 });
 
 const QUEUE = "pdf_queue";
-const LOCAL_FOLDER = 'savedPdfTest';
+const LOCAL_FOLDER = "savedPdfTest";
 const BUCKET_NAME = "pdfs";
 
-if (!fs.existsSync(LOCAL_FOLDER)) {
-  fs.mkdirSync(LOCAL_FOLDER);
-  console.log(`Folder '${LOCAL_FOLDER}' created.`);
+const esClient = new Client({ node: "http://elasticsearch:9200" });
+
+const esTransportOpts = {
+  level: "info",
+  client: esClient,
+  indexPrefix: "pdflogstash",
+  transformer: (logData) => {
+    return {
+      "@timestamp": logData.timestamp,
+      message: logData.message,
+      severity: logData.level,
+      meta: logData.meta || {},
+    };
+  },
+};
+const esTransport = new ElasticsearchTransport(esTransportOpts);
+
+if (!fs.existsSync("savedPdfTest")) {
+  fs.mkdirSync("savedPdfTest");
+  console.log(`Folder 'savedPdfTest' created.`);
 }
 
 // Custom format for console logs
@@ -30,7 +49,9 @@ const consoleFormat = combine(
   colorize(),
   timestamp(),
   printf(({ timestamp, level, message, ...meta }) => {
-    let metaString = Object.keys(meta).length ? JSON.stringify(meta, null, 2) : '';
+    let metaString = Object.keys(meta).length
+      ? JSON.stringify(meta, null, 2)
+      : "";
     return `${timestamp} [${level}]: ${message} ${metaString}`;
   })
 );
@@ -39,7 +60,9 @@ const consoleFormat = combine(
 const fileFormat = combine(
   timestamp(),
   printf(({ timestamp, level, message, ...meta }) => {
-    let metaString = Object.keys(meta).length ? JSON.stringify(meta, null, 2) : '';
+    let metaString = Object.keys(meta).length
+      ? JSON.stringify(meta, null, 2)
+      : "";
     return `${timestamp} [${level}]: ${message} ${metaString}`;
   })
 );
@@ -48,14 +71,21 @@ const logger = winston.createLogger({
   level: "info",
   format: json(),
   transports: [
-    new winston.transports.File({ filename: "logs/combined.log", format: fileFormat }),
+    new winston.transports.File({
+      filename: "logs/combined.log",
+      format: fileFormat,
+    }),
     new winston.transports.Console({ format: consoleFormat }),
+    esTransport, // Elasticsearch transport
   ],
 });
 
-mongoose.connect("mongodb://mongodb:27017/pdfdownloadservice")
+mongoose
+  .connect("mongodb://mongodb:27017/pdfdownloadservice")
   .then(() => logger.info("Connected to MongoDB"))
-  .catch(err => logger.error("Failed to connect to MongoDB", { error: err.message }));
+  .catch((err) =>
+    logger.error("Failed to connect to MongoDB", { error: err.message })
+  );
 
 async function initialize() {
   try {
@@ -68,13 +98,16 @@ async function initialize() {
     }
   } catch (error) {
     logger.error(`Error initializing bucket: ${error.message}`);
-    process.exit(1); 
+    process.exit(1);
   }
 }
 
 async function generateUniqueFilename(destination) {
-  const { nanoid } = await import('nanoid');
-  const dateTime = new Date().toISOString().replace(/[-:.T]/g, '').slice(0, 14);
+  const { nanoid } = await import("nanoid");
+  const dateTime = new Date()
+    .toISOString()
+    .replace(/[-:.T]/g, "")
+    .slice(0, 14);
   const nanoId = nanoid(5).toUpperCase();
   return `${dateTime}${nanoId}.pdf`;
 }
@@ -98,27 +131,38 @@ async function downloadPdf(url, destination, channel) {
     filename = await generateUniqueFilename(destination);
     saveStartTime = new Date(); // Start time for saving
 
-    if (destination === 'minio') {
+    if (destination === "minio") {
       await minioClient.putObject(BUCKET_NAME, filename, buffer);
       logger.info(`Successfully saved ${filename} to Minio.`);
-    } else if (destination === 'local') {
+    } else if (destination === "local") {
       const filePath = path.join(LOCAL_FOLDER, filename);
       fs.writeFileSync(filePath, buffer);
-      logger.info(`Successfully saved ${filename} to local folder '${LOCAL_FOLDER}'.`);
+      logger.info(
+        `Successfully saved ${filename} to local folder '${LOCAL_FOLDER}'.`
+      );
     } else {
       throw new Error(`Invalid destination: ${destination}`);
     }
     saveEndTime = new Date(); // End time for saving
-
   } catch (error) {
     status = "failed";
-    logger.error(`Error downloading or saving PDF from ${url}: ${error.message}`);
+    logger.error(
+      `Error downloading or saving PDF from ${url}: ${error.message}`
+    );
     // Re-queue the URL for another attempt
     await channel.sendToQueue(QUEUE, Buffer.from(JSON.stringify({ url })));
     logger.info(`Requeued URL ${url} due to error`);
   } finally {
-    const downloadDuration = downloadEndTime - downloadStartTime;
-    const saveDuration = saveEndTime - saveStartTime;
+    let downloadDuration = downloadEndTime - downloadStartTime;
+    let saveDuration = saveEndTime - saveStartTime;
+
+    if (isNaN(downloadDuration)) {
+      downloadDuration = 0; 
+    }
+
+    if (isNaN(saveDuration)) {
+      saveDuration = 0;
+    }
 
     // Save log entry to MongoDB
     const logEntry = new LogEntry({
@@ -149,8 +193,7 @@ async function downloadPdf(url, destination, channel) {
   }
 }
 
-
-async function consumeMessages(destination = 'minio') {
+async function consumeMessages(destination = "minio") {
   const connection = await connectToRabbitMQ();
   const channel = await connection.createChannel();
   await channel.assertQueue(QUEUE);

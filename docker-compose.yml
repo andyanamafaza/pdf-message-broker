@@ -26,6 +26,23 @@ services:
     volumes:
       - mongo_data:/data/db
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.2
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+
   express-service:
     build: ./express-service
     ports:
@@ -34,6 +51,7 @@ services:
       - rabbitmq
       - minio
       - mongodb
+      - elasticsearch
 
   pdf-downloader-service:
     build: ./pdf-downloader-service
@@ -43,6 +61,7 @@ services:
       - rabbitmq
       - minio
       - mongodb
+      - elasticsearch
 
 volumes:
   minio_data:
@@ -50,4 +69,6 @@ volumes:
   rabbitmq_data:
     driver: local
   mongo_data:
+    driver: local
+  es_data:
     driver: local

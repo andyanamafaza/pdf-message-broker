@@ -27,10 +27,10 @@ const esClient = new Client({ node: "http://elasticsearch:9200" });
 const esTransportOpts = {
   level: "info",
   client: esClient,
-  indexPrefix: "pdflogstash",
+  indexPrefix: "logstash",
   transformer: (logData) => {
     return {
-      "@timestamp": logData.timestamp,
+      "@timestamp": logData.timestamp || new Date().toISOString(),
       message: logData.message,
       severity: logData.level,
       meta: logData.meta || {},
@@ -39,9 +39,9 @@ const esTransportOpts = {
 };
 const esTransport = new ElasticsearchTransport(esTransportOpts);
 
-if (!fs.existsSync("savedPdfTest")) {
-  fs.mkdirSync("savedPdfTest");
-  console.log(`Folder 'savedPdfTest' created.`);
+if (!fs.existsSync(LOCAL_FOLDER)) {
+  fs.mkdirSync(LOCAL_FOLDER);
+  console.log(`Folder '${LOCAL_FOLDER}' created.`);
 }
 
 // Custom format for console logs
@@ -112,7 +112,7 @@ async function generateUniqueFilename(destination) {
   return `${dateTime}${nanoId}.pdf`;
 }
 
-async function downloadPdf(url, destination, channel) {
+async function downloadPdf(url, destination, channel, attempts = 5) {
   let filename = "";
   let fileSize = 0;
   let status = "success";
@@ -149,15 +149,19 @@ async function downloadPdf(url, destination, channel) {
     logger.error(
       `Error downloading or saving PDF from ${url}: ${error.message}`
     );
-    // Re-queue the URL for another attempt
-    await channel.sendToQueue(QUEUE, Buffer.from(JSON.stringify({ url })));
-    logger.info(`Requeued URL ${url} due to error`);
+
+    if (attempts > 1) {
+      await channel.sendToQueue(QUEUE, Buffer.from(JSON.stringify({ url, attempts: attempts - 1 })));
+      logger.info(`Requeued URL ${url} for attempt ${6 - attempts}`);
+    } else {
+      logger.error(`Max attempts reached for URL ${url}. No more retries.`);
+    }
   } finally {
     let downloadDuration = downloadEndTime - downloadStartTime;
     let saveDuration = saveEndTime - saveStartTime;
 
     if (isNaN(downloadDuration)) {
-      downloadDuration = 0; 
+      downloadDuration = 0;
     }
 
     if (isNaN(saveDuration)) {
@@ -202,16 +206,16 @@ async function consumeMessages(destination = "minio") {
 
   channel.consume(QUEUE, async (msg) => {
     if (msg !== null) {
-      const { url } = JSON.parse(msg.content.toString());
+      const { url, attempts = 5 } = JSON.parse(msg.content.toString());
 
-      await downloadPdf(url, destination, channel);
+      await downloadPdf(url, destination, channel, attempts);
 
       channel.ack(msg);
     }
   });
 }
 
-async function connectToRabbitMQ(retries = 5) {
+async function connectToRabbitMQ(retries = 10) {
   while (retries) {
     try {
       const connection = await amqp.connect("amqp://rabbitmq");

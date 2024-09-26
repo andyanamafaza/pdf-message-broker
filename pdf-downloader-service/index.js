@@ -1,33 +1,42 @@
-const amqp = require("amqplib");
-const axios = require("axios");
-const Minio = require("minio");
-const fs = require("fs");
-const path = require("path");
-const mongoose = require("mongoose");
-const winston = require("winston");
-const LogEntry = require("./models/logEntry.js");
+import path from 'path';
+import dotenv from 'dotenv';
+import amqp from 'amqplib';
+import axios from 'axios';
+import { Client as Minio } from 'minio';
+import fs from 'fs';
+import mongoose from 'mongoose';
+import winston from 'winston';
 const { combine, timestamp, printf, json, colorize } = winston.format;
-const { ElasticsearchTransport } = require("winston-elasticsearch");
-const { Client } = require("@elastic/elasticsearch");
+import { ElasticsearchTransport } from 'winston-elasticsearch';
+import { Client } from '@elastic/elasticsearch';
+import { nanoid } from 'nanoid';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+import LogEntry from "./models/logEntry.js";
 
-const minioClient = new Minio.Client({
-  endPoint: "minio",
-  port: 9000,
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+dotenv.config({ path: resolve(__dirname, '../.env') });
+
+const minioClient = new Minio({
+  endPoint: process.env.MINIO_ENDPOINT,
+  port: parseInt(process.env.MINIO_PORT, 10),
   useSSL: false,
-  accessKey: "adminadminadmin",
-  secretKey: "adminadminadmin",
+  accessKey: process.env.MINIO_ACCESS_KEY,
+  secretKey: process.env.MINIO_SECRET_KEY,
 });
 
-const QUEUE = "pdf_queue";
-const LOCAL_FOLDER = "savedPdfTest";
-const BUCKET_NAME = "pdfs";
+const QUEUE = process.env.RABBITMQ_QUEUE;
+const LOCAL_FOLDER = process.env.LOCAL_FOLDER;
+const BUCKET_NAME = process.env.MINIO_BUCKET_NAME;
 
-const esClient = new Client({ node: "http://elasticsearch:9200" });
+const esClient = new Client({ node: process.env.ELASTICSEARCH_URL});
 
 const esTransportOpts = {
   level: "info",
   client: esClient,
-  indexPrefix: "logstash",
+  indexPrefix: process.env.ELASTICSEARCH_INDEX_PREFIX,
   transformer: (logData) => {
     return {
       "@timestamp": logData.timestamp || new Date().toISOString(),
@@ -81,11 +90,12 @@ const logger = winston.createLogger({
 });
 
 mongoose
-  .connect("mongodb://mongodb:27017/pdfdownloadservice")
+  .connect(process.env.MONGODB_URL)
   .then(() => logger.info("Connected to MongoDB"))
-  .catch((err) =>
-    logger.error("Failed to connect to MongoDB", { error: err.message })
-  );
+  .catch((err) => {
+    logger.error("Failed to connect to MongoDB", { error: err.message });
+    process.exit(1);
+  });
 
 async function initialize() {
   try {
@@ -103,7 +113,6 @@ async function initialize() {
 }
 
 async function generateUniqueFilename(destination) {
-  const { nanoid } = await import("nanoid");
   const dateTime = new Date()
     .toISOString()
     .replace(/[-:.T]/g, "")
@@ -151,7 +160,10 @@ async function downloadPdf(url, destination, channel, attempts = 5) {
     );
 
     if (attempts > 1) {
-      await channel.sendToQueue(QUEUE, Buffer.from(JSON.stringify({ url, attempts: attempts - 1 })));
+      await channel.sendToQueue(
+        QUEUE,
+        Buffer.from(JSON.stringify({ url, attempts: attempts - 1 }))
+      );
       logger.info(`Requeued URL ${url} for attempt ${6 - attempts}`);
     } else {
       logger.error(`Max attempts reached for URL ${url}. No more retries.`);
@@ -197,8 +209,28 @@ async function downloadPdf(url, destination, channel, attempts = 5) {
   }
 }
 
+let rabbitMQConnection;
+
+async function connectToRabbitMQ(retries = 10) {
+  while (retries) {
+    try {
+      const connection = await amqp.connect(process.env.RABBITMQ_URL);
+      logger.info("Connected to RabbitMQ");
+      return connection;
+    } catch (err) {
+      logger.error("Failed to connect to RabbitMQ:", err.message);
+      retries -= 1;
+      logger.info(`Retries left: ${retries}`);
+      await new Promise((res) => setTimeout(res, 5000));
+    }
+  }
+  throw new Error("Failed to connect to RabbitMQ after multiple retries.");
+}
+
 async function consumeMessages(destination = "minio") {
-  const connection = await connectToRabbitMQ();
+  const connection = rabbitMQConnection || await connectToRabbitMQ();
+  rabbitMQConnection = connection;
+  
   const channel = await connection.createChannel();
   await channel.assertQueue(QUEUE);
 
@@ -213,22 +245,6 @@ async function consumeMessages(destination = "minio") {
       channel.ack(msg);
     }
   });
-}
-
-async function connectToRabbitMQ(retries = 10) {
-  while (retries) {
-    try {
-      const connection = await amqp.connect("amqp://rabbitmq");
-      logger.info("Connected to RabbitMQ");
-      return connection;
-    } catch (err) {
-      logger.error("Failed to connect to RabbitMQ:", err.message);
-      retries -= 1;
-      logger.info(`Retries left: ${retries}`);
-      await new Promise((res) => setTimeout(res, 5000));
-    }
-  }
-  throw new Error("Failed to connect to RabbitMQ after multiple retries.");
 }
 
 initialize()

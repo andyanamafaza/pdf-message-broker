@@ -1,3 +1,6 @@
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
 const express = require("express");
 const amqp = require("amqplib");
 const morgan = require("morgan");
@@ -43,7 +46,7 @@ app.use(morgan((tokens, req, res) => {
 
 app.use(express.json());
 
-mongoose.connect("mongodb://mongodb:27017/pdfdownloadservice")
+mongoose.connect(process.env.MONGODB_URL)
   .then(() => logger.info("Connected to MongoDB"))
   .catch(err => logger.error("Failed to connect to MongoDB", { error: err.message }));
 
@@ -54,11 +57,6 @@ app.get("/status", async (req, res) => {
 
     const totalRequests = await LogEntry.countDocuments();
     const successfulRequests = await LogEntry.countDocuments({ status: "success" });
-
-    // const lastTenMinutes = await LogEntry.find({ 
-    //   startTime: { $gte: tenMinutesAgo },
-    //   status: "success"
-    // });
 
     const lastTenMinutesDownload = await LogEntry.find({
       downloadStartTime: { $gte: tenMinutesAgo },
@@ -133,7 +131,7 @@ app.get("/status", async (req, res) => {
 
 async function sendToQueue(url) {
   try {
-    const connection = await amqp.connect("amqp://rabbitmq");
+    const connection = await amqp.connect(process.env.RABBITMQ_URL);
     const channel = await connection.createChannel();
     await channel.assertQueue("pdf_queue");
     channel.sendToQueue("pdf_queue", Buffer.from(JSON.stringify({ url })));

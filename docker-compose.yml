@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   rabbitmq:
     image: rabbitmq:management
@@ -52,6 +54,8 @@ services:
       - minio
       - mongodb
       - elasticsearch
+    env_file:
+      - .env
 
   pdf-downloader-service:
     build: ./pdf-downloader-service
@@ -62,6 +66,8 @@ services:
       - minio
       - mongodb
       - elasticsearch
+    env_file:
+      - .env
 
 volumes:
   minio_data:

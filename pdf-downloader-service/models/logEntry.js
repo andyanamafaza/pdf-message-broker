@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from 'mongoose';
 
 const logEntrySchema = new mongoose.Schema({
   url: String,
@@ -16,4 +16,5 @@ const logEntrySchema = new mongoose.Schema({
 
 const LogEntry = mongoose.model("LogEntry", logEntrySchema);
 
-module.exports = LogEntry;
+// Export the LogEntry model as the default export
+export default LogEntry;
